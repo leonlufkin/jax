@@ -244,6 +244,8 @@ from jax._src.random import (
   rayleigh as rayleigh,
   split as split,
   t as t,
+  multivariate_t as multivariate_t,
+  threefry2x32_key as _deprecated_threefry2x32_key,
   triangular as triangular,
   truncated_normal as truncated_normal,
   uniform as uniform,

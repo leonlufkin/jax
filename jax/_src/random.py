@@ -869,7 +869,6 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
       lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
       lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
-
 def bernoulli(key: KeyArrayLike,
               p: RealArray = np.float32(0.5),
               shape: Shape | None = None) -> Array:
@@ -1739,6 +1738,37 @@ def _t(key, df, shape, dtype) -> Array:
   g = gamma(key_g, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
 
+def multivariate_t(key: KeyArrayLike,
+                   loc: RealArray,
+                   scale: RealArray,
+                   df: RealArray,
+                   shape: Optional[Shape] = None,
+                   dtype: Optional[DTypeLikeFloat] = None,
+                   method: str = 'cholesky'):
+  key, _ = _check_prng_key(key)
+  dtypes.check_user_dtype_supported(dtype)
+  loc, scale, df = promote_dtypes_inexact(loc, scale, df)
+  if dtype is None:
+    dtype = loc.dtype
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
+                     f"dtype, got {dtype}")
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  return _multivariate_t(key, loc, scale, df, shape, dtype, method)
+  
+@partial(jit, static_argnums=(4, 5, 6))
+def _multivariate_t(key, loc, scale, df, shape, dtype, method) -> Array:
+  
+  normal_key, chi_key = _split(key)
+  loc_ = jnp.zeros_like(loc)
+  multinormal_samples = multivariate_normal(normal_key, loc_, scale, shape, dtype, method)
+  chisquare_samples = chisquare(chi_key, df, shape, dtype)
+  
+  with config.numpy_rank_promotion('allow'):
+    result = multinormal_samples / jnp.sqrt(chisquare_samples / df) + loc
+
+  return result
 
 def chisquare(key: KeyArrayLike,
               df: RealArray,
