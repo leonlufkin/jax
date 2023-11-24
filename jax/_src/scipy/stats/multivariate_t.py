@@ -13,22 +13,22 @@ from jax.scipy.special import gammaln
 @_wraps(osp_stats.multivariate_t.logpdf, update_doc=False, lax_description="""
 In the JAX version, the `allow_singular` argument is not implemented.
 """)
-def logpdf(x: ArrayLike, loc: ArrayLike, shape: ArrayLike, df: int, allow_singular: None = None) -> ArrayLike:
+def logpdf(x: ArrayLike, loc: ArrayLike, shape: ArrayLike, df: ArrayLike, allow_singular: None = None) -> ArrayLike:
   if allow_singular is not None:
     raise NotImplementedError("allow_singular argument of multivariate_normal.logpdf")
   x, loc, shape, df = promote_dtypes_inexact(x, loc, shape, df)
   p = loc.shape[-1] if loc.shape else 1
-  
+
   c = gammaln((df + p) / 2) - gammaln(df / 2) - p / 2 * jnp.log(df * np.pi) # does not include covariance term
-  
+
   if not loc.shape:
-    return (c - jnp.log(shape) / 2 
+    return (c - jnp.log(shape) / 2
             - (df + p) / 2 * jnp.log1p((x - loc)**2 / (df * shape)))
-      
+
   else:
     if not np.shape(shape):
       y = x - loc
-      return (c - p * jnp.log(shape) / 2 
+      return (c - p * jnp.log(shape) / 2
             - (df + p) / 2 * jnp.log1p(jnp.einsum('...i,...i->...', y, y)/ (df * shape)))
     else:
       if shape.ndim < 2 or shape.shape[-2:] != (p, p):

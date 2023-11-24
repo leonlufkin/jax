@@ -840,6 +840,116 @@ class LaxRandomTest(jtu.JaxTestCase):
     else:
       self.assertFalse(np.any(np.isnan(result)))
 
+  #### LEON
+  
+  # @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
+  # def testT(self, df, dtype):
+  #   key = self.make_key(1)
+  #   rand = lambda key, df: random.t(key, df, (10000,), dtype)
+  #   crand = jax.jit(rand)
+
+  #   uncompiled_samples = rand(key, df)
+  #   compiled_samples = crand(key, df)
+
+  #   for samples in [uncompiled_samples, compiled_samples]:
+  #     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
+  
+  @jtu.sample_product(
+    dim=[1, 3, 5],
+    dtype=float_dtypes,
+    method=['svd', 'eigh', 'cholesky'],
+  )
+  def testMultivariateT(self, dim, dtype, method):
+    r = self.rng()
+    loc = r.randn(dim)
+    scale_factor = r.randn(dim, dim)
+    scale = np.dot(scale_factor, scale_factor.T) + dim * np.eye(dim)
+    df = r.randint(3, 30)
+
+    key = self.make_key(0)
+    rand = partial(random.multivariate_t, loc=loc, scale=scale, df=df,
+                   shape=(10000,), method=method)
+    crand = jax.jit(rand)
+
+    with jax.numpy_rank_promotion('allow'):
+      uncompiled_samples = np.asarray(rand(key), np.float64)
+      compiled_samples = np.asarray(crand(key), np.float64)
+
+    inv_scale = scipy.linalg.lapack.dtrtri(np.linalg.cholesky((df-2)/df * scale), lower=True)[0]
+    for samples in [uncompiled_samples, compiled_samples]:
+      centered = samples - loc
+      whitened = np.einsum('nj,ij->ni', centered, inv_scale)
+
+      # This is a quick-and-dirty multivariate normality check that tests that a
+      # uniform mixture of the marginals along the covariance matrix's
+      # eigenvectors follow a standard normal distribution.
+      self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.multivariate_t().cdf)
+
+  @jtu.sample_product(
+    dim=[1, 2, 4],
+    loc_batch_size=[(), (3,), (2, 3)],
+    scale_batch_size=[(), (3,), (2, 3)],
+    df_batch_size=[(), (3,), (2, 3)],
+    shape=[(), (1,), (5,)],
+    method=['cholesky', 'svd', 'eigh'],
+  )
+  def testMultivariateTShapes(self, dim, loc_batch_size, scale_batch_size, df_batch_size,
+                                   shape, method):
+    r = self.rng()
+    key = self.make_key(0)
+    eff_batch_size = loc_batch_size \
+      if len(loc_batch_size) > len(scale_batch_size) else scale_batch_size
+    loc = r.randn(*(loc_batch_size + (dim,)))
+    scale_factor = r.randn(*(scale_batch_size + (dim, dim)))
+    scale = np.einsum('...ij,...kj->...ik', scale_factor, scale_factor)
+    scale += 1e-3 * np.eye(dim)
+    df = r.randint(3, 30, size=df_batch_size)
+    shape = shape + eff_batch_size
+    with jax.numpy_rank_promotion('allow'):
+      samples = random.multivariate_t(key, loc, scale, df, shape=shape, method=method)
+    assert samples.shape == shape + (dim,)
+
+  def testMultivariateTCovariance(self):
+    # test code based on https://github.com/google/jax/issues/1869
+    N = 100000
+    loc = jnp.zeros(4)
+    scale = jnp.array([[  0.19,  0.00, -0.13,  0.00],
+                       [  0.00,  0.29,  0.00, -0.23],
+                       [ -0.13,  0.00,  0.39,  0.00],
+                       [  0.00, -0.23,  0.00,  0.49]], dtype=loc.dtype)
+    df = 5
+    cov = (df-2)/df * scale
+
+    key = self.make_key(0)
+    with jax.numpy_rank_promotion('allow'):
+      out_jnp = random.multivariate_t(key, loc=loc, scale=scale, df=df, shape=(N,))
+
+    var_jnp = out_jnp.var(axis=0)
+    self.assertAllClose(cov, var_jnp, rtol=1e-2, atol=1e-2,
+                        check_dtypes=False)
+
+    var_jnp = np.cov(out_jnp, rowvar=False)
+    self.assertAllClose(cov, var_jnp, rtol=1e-2, atol=1e-2,
+                        check_dtypes=False)
+
+  # @jtu.sample_product(method=['cholesky', 'eigh', 'svd'])
+  # @jtu.skip_on_devices('gpu', 'tpu')  # Some NaNs on accelerators.
+  # def testMultivariateTSingularCovariance(self, method):
+  #   # Singular covariance matrix https://github.com/google/jax/discussions/13293
+  #   mu = jnp.zeros((2,))
+  #   sigma = jnp.ones((2, 2))
+  #   key = self.make_key(0)
+  #   result = random.multivariate_normal(key, mean=mu, cov=sigma, shape=(10,), method=method)
+  #   self.assertAllClose(result[:, 0], result[:, 1], atol=1e-3, rtol=1e-3)
+
+  #   # Cholesky fails for singular inputs.
+  #   if method == 'cholesky':
+  #     self.assertTrue(np.all(np.isnan(result)))
+  #   else:
+  #     self.assertFalse(np.any(np.isnan(result)))
+  
+  #### LEON
+
   def testIssue222(self):
     x = random.randint(self.make_key(10003), (), 0, 0)
     assert x == 0

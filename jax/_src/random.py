@@ -1756,17 +1756,30 @@ def multivariate_t(key: KeyArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _multivariate_t(key, loc, scale, df, shape, dtype, method)
-  
+
 @partial(jit, static_argnums=(4, 5, 6))
 def _multivariate_t(key, loc, scale, df, shape, dtype, method) -> Array:
-  
-  normal_key, chi_key = _split(key)
-  loc_ = jnp.zeros_like(loc)
-  multinormal_samples = multivariate_normal(normal_key, loc_, scale, shape, dtype, method)
-  chisquare_samples = chisquare(chi_key, df, shape, dtype)
-  
+
+  # normal_key, chi_key = _split(key)
+  # loc_ = jnp.zeros_like(loc)
+  # multinormal_samples = multivariate_normal(normal_key, loc_, scale, shape, dtype, method)
+  # chisquare_samples = jnp.reshape(chisquare(chi_key, df, shape, dtype), (-1, 1))
+
+  # with config.numpy_rank_promotion('allow'):
+  #   result = multinormal_samples / jnp.sqrt(chisquare_samples / df) + loc
+
+  if method == 'svd':
+    (u, s, _) = svd(scale)
+    factor = u * jnp.sqrt(s[..., None, :])
+  elif method == 'eigh':
+    (w, v) = eigh(scale)
+    factor = v * jnp.sqrt(w[..., None, :])
+  else: # 'cholesky'
+    factor = cholesky(scale)
+  # normal_samples = normal(key, shape + mean.shape[-1:], dtype)
+  t_samples = t(key, df, shape + loc.shape[-1:], dtype)
   with config.numpy_rank_promotion('allow'):
-    result = multinormal_samples / jnp.sqrt(chisquare_samples / df) + loc
+    result = loc + jnp.einsum('...ij,...j->...i', factor, t_samples)
 
   return result
 
